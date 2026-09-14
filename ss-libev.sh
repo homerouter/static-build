@@ -1,20 +1,61 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VER_SSLIBEV="3.3.6"
+export VER_SSLIBEV="3.3.6"
+export VER_SIPOBFS="0.0.5"
+export VER_MBEDTLS="3.6.7"
+export VER_SODIUM="1.0.22"
+export VER_PCRE2="10.48"
+export VER_EV="4.33"
+export VER_CARES="1.34.8"
+export PKG_BUILD="curl build-base linux-headers autoconf automake libtool cmake git"
+export CFLAGS="-Os"
+export LDFLAGS="-static -s"
+
 OUTPUT_DIR="${OUTPUT_DIR:-$PWD/dist}"
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
-
-apk add --no-cache build-base cmake git linux-headers \
-    libsodium-dev libsodium-static mbedtls-dev mbedtls-static \
-    c-ares-dev pcre2-dev pcre2-static libev-dev
-
+apk add --no-cache $PKG_BUILD
 BUILD_DIR="$(mktemp -d)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
-# The release tarball omits the bundled libraries; fetch the tag and its submodules.
+
+curl -fLsS --retry 3 "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-$VER_MBEDTLS/mbedtls-$VER_MBEDTLS.tar.bz2" | tar xj -C "$BUILD_DIR"
+curl -fLsS --retry 3 "https://download.libsodium.org/libsodium/releases/libsodium-$VER_SODIUM.tar.gz" | tar xz -C "$BUILD_DIR"
+curl -fLsS --retry 3 "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-$VER_PCRE2/pcre2-$VER_PCRE2.tar.gz" | tar xz -C "$BUILD_DIR"
+curl -fLsS --retry 3 "https://dist.schmorp.de/libev/Attic/libev-$VER_EV.tar.gz" | tar xz -C "$BUILD_DIR"
+curl -fLsS --retry 3 "https://github.com/c-ares/c-ares/releases/download/v$VER_CARES/c-ares-$VER_CARES.tar.gz" | tar xz -C "$BUILD_DIR"
+# The 3.3.6 release tarball omits libcork, libipset and libbloom.
 git clone --depth 1 --branch "v$VER_SSLIBEV" --recurse-submodules --shallow-submodules \
     https://github.com/shadowsocks/shadowsocks-c.git "$BUILD_DIR/shadowsocks-libev-$VER_SSLIBEV"
+
+cd "$BUILD_DIR/libsodium-$VER_SODIUM"
+./configure --prefix=/usr --disable-ssp --disable-shared
+make -j"$(nproc)"
+make install
+
+cmake -S "$BUILD_DIR/mbedtls-$VER_MBEDTLS" -B "$BUILD_DIR/mbedtls-build" \
+    -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=MinSizeRel \
+    -DENABLE_PROGRAMS=OFF -DENABLE_TESTING=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF
+cmake --build "$BUILD_DIR/mbedtls-build" --parallel "$(nproc)"
+cmake --install "$BUILD_DIR/mbedtls-build"
+
+cd "$BUILD_DIR/pcre2-$VER_PCRE2"
+./configure --prefix=/usr --enable-jit --enable-unicode --disable-shared \
+    --with-match-limit-depth=8192
+make -j"$(nproc)"
+make install
+
+cd "$BUILD_DIR/libev-$VER_EV"
+./configure --prefix=/usr --disable-shared
+make -j"$(nproc)"
+make install
+
+cd "$BUILD_DIR/c-ares-$VER_CARES"
+./configure --prefix=/usr --disable-shared
+make -j"$(nproc)"
+make install
+
+# 3.3.6 uses CMake; explicitly select static libraries for its feature checks too.
 cmake -S "$BUILD_DIR/shadowsocks-libev-$VER_SSLIBEV" -B "$BUILD_DIR/build" \
     -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -no-pie -s" \
