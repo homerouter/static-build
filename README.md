@@ -7,7 +7,8 @@ GitHub Actions 使用 `ss-libev.sh` 在 Alpine 3.23 中编译 Linux x86_64 静�
 为兼容 3.3.6，将原 PCRE 8.45 换成 PCRE2 10.48，将 Mbed TLS 4.2.0 降为 3.6.7；不使用 Alpine 预编译的依赖静态库。
 
 - 推送 `shadowsocks-libev` 分支的脚本或工作流变更、提交相关 PR，或手动运行工作流，均会上传 Actions Artifact。
-- 推送 `ss-libev-v*` 标签（例如 `ss-libev-v3.3.6-1`）会构建并创建 GitHub Release，附加 `.tar.gz` 和 SHA-256 校验文件。标签应指向包含此工作流的提交。
+- 推送 `v*` 或 `ss-libev-v*` 标签（例如 `v3.3.6`）会构建并创建 GitHub Release，附加 `.tar.gz` 和 SHA-256 校验文件。标签应指向包含此工作流的提交。
+- 已有标签可手动补发：运行工作流时在 `tag` 输入标签名，将检出该标签并发布；留空则仅上传 Artifact。
 - 压缩包包含 `ss-local`、`ss-server`、`ss-tunnel`、`ss-manager`、`ss-redir` 和许可证文件。
 
 本地验证（需要 Docker）：

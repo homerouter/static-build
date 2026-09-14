@@ -2,12 +2,17 @@ name: Build shadowsocks-libev
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and release (leave empty for artifacts only)
+        type: string
+        required: false
   push:
     branches: [shadowsocks-libev]
     paths:
       - ss-libev.sh
       - .github/workflows/ss-libev.yml
-    tags: ['ss-libev-v*']
+    tags: ['v*', 'ss-libev-v*']
   pull_request:
     paths:
       - ss-libev.sh
@@ -22,6 +27,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
       - name: Build and check static binaries
         run: |
           docker run --rm \
@@ -34,7 +41,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/ss-libev-v')
+    if: startsWith(github.ref, 'refs/tags/') || inputs.tag
     needs: build
     runs-on: ubuntu-24.04
     permissions:
@@ -48,5 +55,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/*
+          else
+            gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes
+          fi
