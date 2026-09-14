@@ -1,70 +1,41 @@
 #!/usr/bin/env bash
-# -*- coding: utf-8 -*-
+set -euo pipefail
 
-export VER_SSLIBEV="3.3.6"
-export VER_SIPOBFS="0.0.5"
-export VER_MBEDTLS="4.2.0"
-export VER_SODIUM="1.0.22"
-export VER_PCRE="8.45"
-export VER_EV="4.33"
-export VER_CARES="1.34.8"
-export PKG_BUILD="curl build-base linux-headers autoconf automake libtool"
-export CFLAGS="-Os"
-export LDFLAGS="-static -s"
+VER_SSLIBEV="3.3.6"
+OUTPUT_DIR="${OUTPUT_DIR:-$PWD/dist}"
+mkdir -p "$OUTPUT_DIR"
+OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
 
-apk --update upgrade
-apk --update add $PKG_BUILD
+apk add --no-cache build-base cmake git linux-headers \
+    libsodium-dev libsodium-static mbedtls-dev mbedtls-static \
+    c-ares-dev pcre2-dev pcre2-static libev-dev
 
-#curl -sSL https://github.com/shadowsocks/shadowsocks-c/releases/download/v$VER_SSLIBEV/shadowsocks-libev-$VER_SSLIBEV.tar.gz | tar xz -C /tmp
-#curl -sSL https://github.com/shadowsocks/simple-obfs/archive/v$VER_SIPOBFS.tar.gz | tar xz -C /tmp
-#curl -sSL https://github.com/ARMmbed/mbedtls/archive/mbedtls-$VER_MBEDTLS.tar.gz | tar xz -C /tmp
-curl -sSL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-$VER_MBEDTLS/mbedtls-$VER_MBEDTLS.tar.bz2 | tar -jxvf -C /tmp
-curl -sSL https://download.libsodium.org/libsodium/releases/libsodium-$VER_SODIUM.tar.gz | tar xz -C /tmp
-curl -sSL https://downloads.sourceforge.net/project/pcre/pcre/$VER_PCRE/pcre-$VER_PCRE.tar.gz | tar xz -C /tmp
-curl -sSL http://dist.schmorp.de/libev/Attic/libev-$VER_EV.tar.gz | tar xz -C /tmp
-curl -sSL https://github.com/c-ares/c-ares/releases/download/v$VER_CARES/c-ares-$VER_CARES.tar.gz | tar xz -C /tmp
+BUILD_DIR="$(mktemp -d)"
+trap 'rm -rf "$BUILD_DIR"' EXIT
+# The release tarball omits the bundled libraries; fetch the tag and its submodules.
+git clone --depth 1 --branch "v$VER_SSLIBEV" --recurse-submodules --shallow-submodules \
+    https://github.com/shadowsocks/shadowsocks-c.git "$BUILD_DIR/shadowsocks-libev-$VER_SSLIBEV"
+cmake -S "$BUILD_DIR/shadowsocks-libev-$VER_SSLIBEV" -B "$BUILD_DIR/build" \
+    -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -no-pie -s" \
+    -DMBEDTLS_CRYPTO_LIBRARY=/usr/lib/libmbedcrypto.a \
+    -DSODIUM_LIBRARY=/usr/lib/libsodium.a \
+    -DWITH_STATIC=ON -DBUILD_TESTING=OFF -DWITH_DOC_MAN=OFF -DWITH_DOC_HTML=OFF
+cmake --build "$BUILD_DIR/build" --parallel "$(nproc)" \
+    --target ss-local ss-server ss-tunnel ss-manager ss-redir
 
+for binary in ss-local ss-server ss-tunnel ss-manager ss-redir; do
+    test -x "$BUILD_DIR/build/bin/$binary"
+    if readelf -l "$BUILD_DIR/build/bin/$binary" | grep -q INTERP; then
+        echo "$binary is not statically linked" >&2
+        exit 1
+    fi
+    "$BUILD_DIR/build/bin/$binary" -h > /dev/null 2>&1
+done
 
-cd /tmp/libsodium-$VER_SODIUM/
-    ./configure \
-        --prefix=/usr \
-	--disable-ssp \
-	--disable-shared
-    make install
-
-cd /tmp/mbedtls-mbedtls-$VER_MBEDTLS/
-LDFLAGS="-static -no-pie" make DESTDIR=/usr install
-
-cd /tmp/pcre-$VER_PCRE/
-    ./configure \
-        --prefix=/usr \
-        --enable-jit \
-        --enable-utf8 \
-        --enable-unicode-properties \
-        --disable-shared \
-        --disable-cpp \
-        --with-match-limit-recursion=8192
-    make install
-
-cd /tmp/libev-$VER_EV/
-    ./configure \
-        --prefix=/usr \
-	--disable-shared
-    make install
-
-cd /tmp/c-ares-$VER_CARES/                                   
-    ./buildconf                                           
-    autoconf configure.ac                                 
-    ./configure  \
-	--prefix=/usr \
-	--disable-shared
-   make install
-
-cd /tmp/shadowsocks-libev-$VER_SSLIBEV/
-LIBS="-lpthread -lm" LDFLAGS="-Wl,-static -static -static-libgcc -no-pie"  ./configure --prefix=/usr --disable-documentation
-    make install
-
-#cd /tmp/simple-obfs-$VER_SIPOBFS/
-#   ./autogen.sh
-#LIBS="-lpthread -lm" LDFLAGS="-Wl,-static -static -static-libgcc -no-pie"  ./configure --prefix=/usr --disable-documentation
-#    make install
+ARCHIVE="shadowsocks-libev-$VER_SSLIBEV-linux-$(uname -m).tar.gz"
+cp "$BUILD_DIR/shadowsocks-libev-$VER_SSLIBEV/"{COPYING,LICENSE} "$BUILD_DIR/build/bin/"
+tar czf "$OUTPUT_DIR/$ARCHIVE" -C "$BUILD_DIR/build/bin" \
+    ss-local ss-server ss-tunnel ss-manager ss-redir COPYING LICENSE
+cd "$OUTPUT_DIR"
+sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
