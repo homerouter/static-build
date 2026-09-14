@@ -33,7 +33,7 @@ jobs:
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/work" -w /work \
-            alpine:3.23 sh -ec 'apk add --no-cache bash; bash ss-libev.sh'
+            alpine:latest sh -ec 'apk add --no-cache bash; bash ss-libev.sh'
       - uses: actions/upload-artifact@v4
         with:
           name: shadowsocks-libev-linux-x86_64

@@ -2,7 +2,7 @@
 
 ## shadowsocks-libev
 
-GitHub Actions 使用 `ss-libev.sh` 在 Alpine 3.23 中编译 Linux x86_64 静态二进制。
+GitHub Actions 使用 `ss-libev.sh` 在 `alpine:latest` 中编译 Linux x86_64 静态二进制。
 主程序及依赖均从固定版本源码构建：shadowsocks-libev 3.3.6、libsodium 1.0.22、libev 4.33、c-ares 1.34.8。
 为兼容 3.3.6，将原 PCRE 8.45 换成 PCRE2 10.48，将 Mbed TLS 4.2.0 降为 3.6.7；不使用 Alpine 预编译的依赖静态库。
 
@@ -14,7 +14,7 @@ GitHub Actions 使用 `ss-libev.sh` 在 Alpine 3.23 中编译 Linux x86_64 静�
 本地验证（需要 Docker）：
 
 ```sh
-docker run --rm -v "$PWD:/work" -w /work alpine:3.23 \
+docker run --rm -v "$PWD:/work" -w /work alpine:latest \
   sh -ec 'apk add --no-cache bash; bash ss-libev.sh'
 ```
 
