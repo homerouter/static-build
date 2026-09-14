@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export VER_SSLIBEV="3.3.6"
+VER_SSLIBEV="${BUILD_TAG:?Set BUILD_TAG to a release tag such as v3.3.6}"
+VER_SSLIBEV="${VER_SSLIBEV#ss-libev-}"
+export VER_SSLIBEV="${VER_SSLIBEV#v}"
+if [[ ! "$VER_SSLIBEV" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Invalid release tag: $BUILD_TAG (expected vX.Y.Z)" >&2
+    exit 1
+fi
 export VER_SIPOBFS="0.0.5"
 export VER_MBEDTLS="3.6.7"
 export VER_SODIUM="1.0.22"
