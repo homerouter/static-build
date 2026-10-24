@@ -9,8 +9,10 @@ on:
       - 'nginx.sh'
       - '.github/workflows/nginx.yml'
     tags:
+      - '[0-9][0-9][0-9][0-9][0-9][0-9]'
+      - 'v[0-9][0-9][0-9][0-9][0-9][0-9]'
       - 'nginx-v*'
-      - 'v1.3*'
+      - 'v*'
   pull_request:
     paths:
       - 'nginx/**'
@@ -22,6 +24,10 @@ on:
         description: 'Nginx version to build'
         required: false
         default: '1.31.8'
+      tag:
+        description: 'Release tag (leave empty for YYMMDD)'
+        required: false
+        default: ''
 
 concurrency:
   group: nginx-${{ github.ref }}
@@ -56,7 +62,7 @@ jobs:
           set -euo pipefail
           if [ -n "${{ inputs.version || '' }}" ]; then
             VER="${{ inputs.version }}"
-          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          elif [[ "${{ github.ref }}" == refs/tags/* ]] && [[ ! "${GITHUB_REF_NAME}" =~ ^v?[0-9]{6}$ ]]; then
             TAG="${GITHUB_REF_NAME}"
             TAG="${TAG#nginx-}"
             VER="${TAG#v}"
@@ -108,12 +114,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ (github.ref_type == 'tag' && github.ref_name) || format('nginx-v{0}', inputs.version || '1.31.8') }}
+          INPUT_TAG: ${{ inputs.tag || '' }}
         run: |
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" dist-release/* --clobber
+          cd dist-release
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          elif [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
           else
-            gh release create "$TAG" dist-release/* \
-              --title "$TAG" \
-              --notes "Statically linked Nginx Debian packages with HTTP/3 (QUIC), TLS, Stream, and fancyindex modules."
+            TAG="$(date +%y%m%d)"
           fi
+          echo "Publishing Nginx packages to release: $TAG"
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --notes "Static build release $TAG" || true
+          fi
+          gh release upload "$TAG" * --clobber

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 VER_NGINX="${VER_NGINX:-1.31.8}"
-VER_FANCYINDEX="${VER_FANCYINDEX:-0.5.2}"
+VER_FANCYINDEX="${VER_FANCYINDEX:-0.6.0}"
 
 ARCH="$(uname -m)"
 case "$ARCH" in

@@ -9,9 +9,11 @@ on:
       - 'ss-rust.sh'
       - '.github/workflows/shadowsocks-rust.yml'
     tags:
+      - '[0-9][0-9][0-9][0-9][0-9][0-9]'
+      - 'v[0-9][0-9][0-9][0-9][0-9][0-9]'
       - 'ss-rust-v*'
       - 'shadowsocks-rust-v*'
-      - 'v1.2*'
+      - 'v*'
   pull_request:
     paths:
       - 'shadowsocks-rust-server/**'
@@ -20,9 +22,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'shadowsocks-rust version to build (e.g. 1.24.0)'
+        description: 'shadowsocks-rust upstream version to build'
         required: false
-        default: '1.24.0'
+        default: '1.25.0'
+      tag:
+        description: 'Release tag (leave empty for YYMMDD)'
+        required: false
+        default: ''
 
 concurrency:
   group: ss-rust-${{ github.ref }}
@@ -57,13 +63,13 @@ jobs:
           set -euo pipefail
           if [ -n "${{ inputs.version || '' }}" ]; then
             VER="${{ inputs.version }}"
-          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          elif [[ "${{ github.ref }}" == refs/tags/* ]] && [[ ! "${GITHUB_REF_NAME}" =~ ^v?[0-9]{6}$ ]]; then
             TAG="${GITHUB_REF_NAME}"
             TAG="${TAG#shadowsocks-rust-}"
             TAG="${TAG#ss-rust-}"
             VER="${TAG#v}"
           else
-            VER="1.24.0"
+            VER="1.25.0"
           fi
           echo "version=${VER}" >> "$GITHUB_OUTPUT"
           echo "Building shadowsocks-rust version: ${VER} for ${{ matrix.deb_arch }}"
@@ -103,14 +109,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ (github.ref_type == 'tag' && github.ref_name) || format('ss-rust-v{0}', inputs.version || '1.24.0') }}
+          INPUT_TAG: ${{ inputs.tag || '' }}
         run: |
           cd dist-release
-          ls -la
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" * --clobber
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          elif [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
           else
-            gh release create "$TAG" * \
-              --title "$TAG" \
-              --notes "Debian packages for shadowsocks-rust-server (statically linked musl binary with systemd service)."
+            TAG="$(date +%y%m%d)"
           fi
+          echo "Publishing shadowsocks-rust to release: $TAG"
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --notes "Static build release $TAG" || true
+          fi
+          gh release upload "$TAG" * --clobber

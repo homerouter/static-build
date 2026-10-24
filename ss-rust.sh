@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 set -euo pipefail
 
-VER_SSRUST="${VER_SSRUST:-${BUILD_TAG:-${GITHUB_REF_NAME:-1.24.0}}}"
+VER_SSRUST="${VER_SSRUST:-${BUILD_TAG:-${GITHUB_REF_NAME:-1.25.0}}}"
 VER_SSRUST="${VER_SSRUST#ss-rust-}"
 VER_SSRUST="${VER_SSRUST#v}"
 

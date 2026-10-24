@@ -1,19 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VER_SSLIBEV="${BUILD_TAG:?Set BUILD_TAG to a release tag such as v3.3.6}"
-VER_SSLIBEV="${VER_SSLIBEV#ss-libev-}"
-export VER_SSLIBEV="${VER_SSLIBEV#v}"
-if [[ ! "$VER_SSLIBEV" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Invalid release tag: $BUILD_TAG (expected vX.Y.Z)" >&2
+BUILD_TAG="${BUILD_TAG:-}"
+if [ -z "$BUILD_TAG" ] || [[ "$BUILD_TAG" == *"/"* ]] || [[ "$BUILD_TAG" == *".."* ]]; then
+    echo "Invalid release tag: '$BUILD_TAG'" >&2
     exit 1
 fi
+
+TAG_CLEAN="${BUILD_TAG#ss-libev-}"
+TAG_CLEAN="${TAG_CLEAN#v}"
+
+if [[ "$TAG_CLEAN" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    VER_SSLIBEV="$TAG_CLEAN"
+elif [[ "$TAG_CLEAN" =~ ^[0-9]{6}$ ]]; then
+    VER_SSLIBEV="${VER_SSLIBEV:-3.3.6}"
+else
+    echo "Invalid release tag: $BUILD_TAG (expected vX.Y.Z or YYMMDD)" >&2
+    exit 1
+fi
+export VER_SSLIBEV
 export VER_SIPOBFS="0.0.5"
 export VER_MBEDTLS="3.6.7"
 export VER_SODIUM="1.0.22"
-export VER_PCRE2="10.48"
+export VER_PCRE2="10.49"
 export VER_EV="4.33"
-export VER_CARES="1.34.8"
+export VER_CARES="1.34.9"
 export PKG_BUILD="curl build-base linux-headers autoconf automake libtool cmake git"
 export CFLAGS="-Os"
 export LDFLAGS="-static -s"
