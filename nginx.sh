@@ -1,91 +1,124 @@
 #!/usr/bin/env bash
 # -*- coding: utf-8 -*-
+set -euo pipefail
 
-# Define dependency versions
-VER_NGINX="1.27.4"
-VER_LIBERSSL="4.0.0"
-VER_ZLIB="1.3.1"
-VER_PCRE="10.45"
-VER_FANCYINDEX="0.5.2"
+VER_NGINX="${VER_NGINX:-1.31.8}"
+VER_FANCYINDEX="${VER_FANCYINDEX:-0.5.2}"
 
-# Define build dependencies
-PKG_BUILD=(
-    curl
-    build-base
-    linux-headers
-    perl
-)
+ARCH="$(uname -m)"
+case "$ARCH" in
+  x86_64)  DEB_ARCH="amd64" ;;
+  aarch64) DEB_ARCH="arm64" ;;
+  *)       DEB_ARCH="${DEB_ARCH:-$ARCH}" ;;
+esac
 
-# Set staging directory for installation
-STAGING_DIR="${STAGING_DIR:-/tmp/staging}"
+echo "==> Building Nginx $VER_NGINX for $ARCH ($DEB_ARCH)"
 
 # Install build dependencies
-apk --update add "${PKG_BUILD[@]}"
+apk add --no-cache \
+    gcc g++ make curl linux-headers \
+    openssl-dev openssl-libs-static \
+    pcre2-dev zlib-dev zlib-static \
+    ruby ruby-dev build-base file tar xz
 
-# Create staging directory with full path
-echo "Creating STAGING_DIR: $STAGING_DIR/usr/sbin"
-mkdir -p "$STAGING_DIR/usr/sbin" || { echo "Failed to create STAGING_DIR: $STAGING_DIR/usr/sbin"; exit 1; }
-echo "STAGING_DIR set to: $STAGING_DIR"
+gem install --no-document fpm
 
-# Combine curl commands to download dependencies
-cd /tmp || exit
-curl -sSL "http://nginx.org/download/nginx-$VER_NGINX.tar.gz" -o "nginx-$VER_NGINX.tar.gz"
-curl -sSL "http://ftp.openbsd.org/pub/OpenBSD/LibreSSL/libressl-$VER_LIBERSSL.tar.gz" -o "libressl-$VER_LIBERSSL.tar.gz"
-curl -sSL "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-$VER_PCRE/pcre2-$VER_PCRE.tar.gz" -o "pcre2-$VER_PCRE.tar.gz"
-curl -sSL "http://zlib.net/zlib-$VER_ZLIB.tar.gz" -o "zlib-$VER_ZLIB.tar.gz"
-curl -sSL "https://github.com/aperezdc/ngx-fancyindex/releases/download/v$VER_FANCYINDEX/ngx-fancyindex-$VER_FANCYINDEX.tar.xz" -o "ngx-fancyindex-$VER_FANCYINDEX.tar.xz"
+BUILD_DIR="$(mktemp -d)"
+STAGING_DIR="$(mktemp -d)"
+trap 'rm -rf "$BUILD_DIR" "$STAGING_DIR"' EXIT
 
-# Extract dependencies
-tar xzf "nginx-$VER_NGINX.tar.gz"
-tar xzf "libressl-$VER_LIBERSSL.tar.gz"
-tar xzf "pcre2-$VER_PCRE.tar.gz"
-tar xzf "zlib-$VER_ZLIB.tar.gz"
-tar xf "ngx-fancyindex-$VER_FANCYINDEX.tar.xz"
+cd "$BUILD_DIR"
+echo "==> Downloading sources..."
+curl -fsSL "https://nginx.org/download/nginx-$VER_NGINX.tar.gz" | tar xz
+curl -fsSL "https://github.com/aperezdc/ngx-fancyindex/releases/download/v$VER_FANCYINDEX/ngx-fancyindex-$VER_FANCYINDEX.tar.xz" | tar xJ
 
-# Build and install Nginx
-cd "nginx-$VER_NGINX" || exit
+cd "nginx-$VER_NGINX"
+
+echo "==> Configuring Nginx with static modules..."
 ./configure \
-    --prefix=/usr \
+    --prefix=/etc/nginx \
     --sbin-path=/usr/sbin/nginx \
     --conf-path=/etc/nginx/nginx.conf \
     --error-log-path=/var/log/nginx/error.log \
     --http-log-path=/var/log/nginx/access.log \
-    --pid-path=/var/run/nginx.pid \
-    --lock-path=/var/run/nginx.lock \
+    --pid-path=/run/nginx.pid \
+    --lock-path=/run/nginx.lock \
     --http-client-body-temp-path=/var/cache/nginx/client_temp \
     --http-proxy-temp-path=/var/cache/nginx/proxy_temp \
+    --http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp \
+    --http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp \
+    --http-scgi-temp-path=/var/cache/nginx/scgi_temp \
     --user=nobody \
     --group=nogroup \
     --with-file-aio \
     --with-threads \
-    --with-http_addition_module \
     --with-http_ssl_module \
     --with-http_v2_module \
-    --with-http_dav_module \
+    --with-http_v3_module \
     --with-http_realip_module \
     --with-http_stub_status_module \
+    --with-http_gzip_static_module \
+    --with-http_sub_module \
+    --with-http_addition_module \
+    --with-http_auth_request_module \
     --with-http_secure_link_module \
+    --with-http_slice_module \
+    --with-http_dav_module \
     --with-stream \
     --with-stream_ssl_module \
     --with-stream_ssl_preread_module \
-    --without-http_fastcgi_module \
-    --without-http_uwsgi_module \
-    --without-http_scgi_module \
-    --without-http_memcached_module \
-    --with-openssl=../libressl-$VER_LIBERSSL \
-    --with-zlib=../zlib-$VER_ZLIB \
-    --with-pcre=../pcre2-$VER_PCRE \
-    --add-module=../ngx-fancyindex-$VER_FANCYINDEX \
+    --with-stream_realip_module \
     --with-pcre-jit \
-    --with-cc=x86_64-alpine-linux-musl-gcc \
-    --with-cc-opt="-Os -fstack-protector-strong -DTCP_FASTOPEN=23" \
-    --with-ld-opt="-Wl,-static -static -static-libgcc -no-pie"
-make || { echo "Make failed"; exit 1; }
-make install || { echo "Make install failed"; exit 1; }
+    --add-module="../ngx-fancyindex-$VER_FANCYINDEX" \
+    --with-cc-opt="-static" \
+    --with-ld-opt="-static"
 
-# Manually stage the binary
-echo "Copying /usr/sbin/nginx to $STAGING_DIR/usr/sbin/nginx"
-cp /usr/sbin/nginx "$STAGING_DIR/usr/sbin/nginx" || { echo "Failed to copy nginx to $STAGING_DIR/usr/sbin/nginx"; exit 1; }
+echo "==> Compiling Nginx..."
+make -j"$(nproc)"
+make install DESTDIR="$STAGING_DIR"
 
-# Verify staging
-ls -la "$STAGING_DIR/usr/sbin/nginx" || { echo "Nginx binary not found in $STAGING_DIR/usr/sbin/nginx"; exit 1; }
+echo "==> Stripping binary and verifying static linkage..."
+strip "$STAGING_DIR/usr/sbin/nginx"
+
+if readelf -l "$STAGING_DIR/usr/sbin/nginx" | grep -qi INTERP; then
+    echo "ERROR: nginx binary is dynamically linked!" >&2
+    exit 1
+fi
+"$STAGING_DIR/usr/sbin/nginx" -V
+
+echo "==> Setting up directory layout..."
+mkdir -p "$STAGING_DIR/var/cache/nginx"
+mkdir -p "$STAGING_DIR/var/log/nginx"
+mkdir -p "$STAGING_DIR/var/www/html"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SERVICE_FILE="$SCRIPT_DIR/nginx/script/nginx.service"
+OUTPUT_DIR="${OUTPUT_DIR:-$SCRIPT_DIR/dist}"
+mkdir -p "$OUTPUT_DIR"
+
+echo "==> Packaging Nginx deb with FPM..."
+fpm -s dir -t deb \
+    -n "nginx" \
+    -v "$VER_NGINX" \
+    -a "$DEB_ARCH" \
+    --description "High performance web server and reverse proxy server (static musl build with HTTP/3 QUIC, TLS, Stream, and fancyindex)" \
+    --maintainer "debiansid <repo@tlle.eu.org>" \
+    --vendor "homerouter" \
+    --license "2-clause BSD-like" \
+    --category "httpd" \
+    --provides "nginx" \
+    --provides "httpd" \
+    --provides "httpd-cgi" \
+    --conflicts "nginx-full,nginx-light,nginx-extras,nginx-core,nginx-custom" \
+    --replaces "nginx-full,nginx-light,nginx-extras,nginx-core,nginx-custom" \
+    --config-files "/etc/nginx/nginx.conf" \
+    --config-files "/etc/nginx/mime.types" \
+    --config-files "/etc/nginx/fastcgi.conf" \
+    --config-files "/etc/nginx/fastcgi_params" \
+    --config-files "/etc/nginx/scgi_params" \
+    --config-files "/etc/nginx/uwsgi_params" \
+    --deb-systemd "$SERVICE_FILE" \
+    -p "$OUTPUT_DIR/nginx_${VER_NGINX}_${DEB_ARCH}.deb" \
+    -C "$STAGING_DIR" .
+
+echo "==> Successfully created $OUTPUT_DIR/nginx_${VER_NGINX}_${DEB_ARCH}.deb"
