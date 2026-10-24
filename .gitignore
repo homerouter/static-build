@@ -1,4 +1,6 @@
 dist/
 *.deb
+*.tar.gz
+*.tar.xz
 *.sha256
 SHA256SUMS

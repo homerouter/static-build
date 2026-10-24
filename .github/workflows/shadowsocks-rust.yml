@@ -1,21 +1,31 @@
-name: Build and Release Nginx deb package
+name: Build shadowsocks-rust
 
 on:
   push:
     branches:
       - main
+    paths:
+      - 'shadowsocks-rust-server/**'
+      - 'ss-rust.sh'
+      - '.github/workflows/shadowsocks-rust.yml'
     tags:
-      - 'v*'
-      - 'nginx-v*'
+      - 'ss-rust-v*'
+      - 'shadowsocks-rust-v*'
+      - 'v1.2*'
+  pull_request:
+    paths:
+      - 'shadowsocks-rust-server/**'
+      - 'ss-rust.sh'
+      - '.github/workflows/shadowsocks-rust.yml'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Nginx version to build'
+        description: 'shadowsocks-rust version to build (e.g. 1.24.0)'
         required: false
-        default: '1.31.8'
+        default: '1.24.0'
 
 concurrency:
-  group: nginx-${{ github.ref }}
+  group: ss-rust-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -23,7 +33,7 @@ permissions:
 
 jobs:
   build:
-    name: Build static nginx deb (${{ matrix.deb_arch }})
+    name: Build shadowsocks-rust deb (${{ matrix.deb_arch }})
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -49,35 +59,36 @@ jobs:
             VER="${{ inputs.version }}"
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
             TAG="${GITHUB_REF_NAME}"
-            TAG="${TAG#nginx-}"
+            TAG="${TAG#shadowsocks-rust-}"
+            TAG="${TAG#ss-rust-}"
             VER="${TAG#v}"
           else
-            VER="1.31.8"
+            VER="1.24.0"
           fi
           echo "version=${VER}" >> "$GITHUB_OUTPUT"
-          echo "Building Nginx version: ${VER} for ${{ matrix.deb_arch }}"
+          echo "Building shadowsocks-rust version: ${VER} for ${{ matrix.deb_arch }}"
 
-      - name: Build static Nginx and package deb
+      - name: Package shadowsocks-rust deb
         env:
-          VER_NGINX: ${{ steps.meta.outputs.version }}
+          VER_SSRUST: ${{ steps.meta.outputs.version }}
           PLATFORM: ${{ matrix.platform }}
         run: |
           docker run --rm --platform "$PLATFORM" \
             -v "$GITHUB_WORKSPACE:/work" -w /work \
-            -e VER_NGINX="$VER_NGINX" \
-            alpine:3.20 sh -ec 'apk add --no-cache bash; bash /work/nginx.sh'
+            -e VER_SSRUST="$VER_SSRUST" \
+            alpine:3.20 sh -ec 'apk add --no-cache bash; bash /work/ss-rust.sh'
 
       - name: Upload deb artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nginx-${{ steps.meta.outputs.version }}-${{ matrix.deb_arch }}
+          name: shadowsocks-rust-${{ steps.meta.outputs.version }}-${{ matrix.deb_arch }}
           path: dist/*.deb
           if-no-files-found: error
 
   release:
     name: Publish Release
-    needs: build
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    needs: build
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -88,23 +99,18 @@ jobs:
           path: dist-release
           merge-multiple: true
 
-      - name: Check and generate checksums
-        run: |
-          cd dist-release
-          ls -la
-          sha256sum *.deb > SHA256SUMS
-          cat SHA256SUMS
-
       - name: Publish to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ (github.ref_type == 'tag' && github.ref_name) || format('v{0}', inputs.version || '1.31.8') }}
+          TAG: ${{ (github.ref_type == 'tag' && github.ref_name) || format('ss-rust-v{0}', inputs.version || '1.24.0') }}
         run: |
+          cd dist-release
+          ls -la
           if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" dist-release/* --clobber
+            gh release upload "$TAG" * --clobber
           else
-            gh release create "$TAG" dist-release/* \
+            gh release create "$TAG" * \
               --title "$TAG" \
-              --notes "Statically linked Nginx Debian packages with HTTP/3 (QUIC), TLS, Stream, and fancyindex modules."
+              --notes "Debian packages for shadowsocks-rust-server (statically linked musl binary with systemd service)."
           fi

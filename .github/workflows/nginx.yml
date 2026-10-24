@@ -1,0 +1,119 @@
+name: Build Nginx
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'nginx/**'
+      - 'nginx.sh'
+      - '.github/workflows/nginx.yml'
+    tags:
+      - 'nginx-v*'
+      - 'v1.3*'
+  pull_request:
+    paths:
+      - 'nginx/**'
+      - 'nginx.sh'
+      - '.github/workflows/nginx.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Nginx version to build'
+        required: false
+        default: '1.31.8'
+
+concurrency:
+  group: nginx-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build static nginx deb (${{ matrix.deb_arch }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - deb_arch: amd64
+            platform: linux/amd64
+          - deb_arch: arm64
+            platform: linux/arm64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Resolve version
+        id: meta
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.version || '' }}" ]; then
+            VER="${{ inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            TAG="${TAG#nginx-}"
+            VER="${TAG#v}"
+          else
+            VER="1.31.8"
+          fi
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "Building Nginx version: ${VER} for ${{ matrix.deb_arch }}"
+
+      - name: Build static Nginx and package deb
+        env:
+          VER_NGINX: ${{ steps.meta.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          docker run --rm --platform "$PLATFORM" \
+            -v "$GITHUB_WORKSPACE:/work" -w /work \
+            -e VER_NGINX="$VER_NGINX" \
+            alpine:3.20 sh -ec 'apk add --no-cache bash; bash /work/nginx.sh'
+
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nginx-${{ steps.meta.outputs.version }}-${{ matrix.deb_arch }}
+          path: dist/*.deb
+          if-no-files-found: error
+
+  release:
+    name: Publish Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-release
+          merge-multiple: true
+
+      - name: Check and generate checksums
+        run: |
+          cd dist-release
+          ls -la
+          sha256sum *.deb > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ (github.ref_type == 'tag' && github.ref_name) || format('nginx-v{0}', inputs.version || '1.31.8') }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist-release/* --clobber
+          else
+            gh release create "$TAG" dist-release/* \
+              --title "$TAG" \
+              --notes "Statically linked Nginx Debian packages with HTTP/3 (QUIC), TLS, Stream, and fancyindex modules."
+          fi

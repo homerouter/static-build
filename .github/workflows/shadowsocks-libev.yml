@@ -1,0 +1,130 @@
+name: Build shadowsocks-libev
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'shadowsocks-libev/**'
+      - 'ss-libev.sh'
+      - 'tests/**'
+      - '.github/workflows/shadowsocks-libev.yml'
+    tags:
+      - 'ss-libev-v*'
+      - 'shadowsocks-libev-v*'
+      - 'v3.*'
+  pull_request:
+    paths:
+      - 'shadowsocks-libev/**'
+      - 'ss-libev.sh'
+      - 'tests/**'
+      - '.github/workflows/shadowsocks-libev.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'shadowsocks-libev version (e.g. 3.3.6)'
+        required: false
+        default: '3.3.6'
+
+concurrency:
+  group: ss-libev-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Test version parser
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run version tests
+        run: bash tests/version.sh
+
+  build:
+    name: Build static shadowsocks-libev (${{ matrix.deb_arch }})
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - deb_arch: amd64
+            platform: linux/amd64
+          - deb_arch: arm64
+            platform: linux/arm64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Resolve version
+        id: meta
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.version || '' }}" ]; then
+            VER="${{ inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            TAG="${TAG#shadowsocks-libev-}"
+            TAG="${TAG#ss-libev-}"
+            VER="${TAG#v}"
+          else
+            VER="3.3.6"
+          fi
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "Building shadowsocks-libev version: ${VER} for ${{ matrix.deb_arch }}"
+
+      - name: Build static binaries
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          BUILD_TAG: v${{ steps.meta.outputs.version }}
+        run: |
+          docker run --rm --platform "$PLATFORM" \
+            -v "$GITHUB_WORKSPACE:/work" -w /work \
+            -e BUILD_TAG="$BUILD_TAG" \
+            alpine:latest sh -ec 'apk add --no-cache bash; bash /work/ss-libev.sh'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: shadowsocks-libev-${{ steps.meta.outputs.version }}-${{ matrix.deb_arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish Release
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-release
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ (github.ref_type == 'tag' && github.ref_name) || format('ss-libev-v{0}', inputs.version || '3.3.6') }}
+        run: |
+          cd dist-release
+          ls -la
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" * --clobber
+          else
+            gh release create "$TAG" * \
+              --title "$TAG" \
+              --notes "Statically linked shadowsocks-libev binaries with libsodium, mbedtls, pcre2, libev, and c-ares."
+          fi

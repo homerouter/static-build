@@ -1,0 +1,13 @@
+{
+    "server": "0.0.0.0",
+    "server_port": 58388,
+    "mode": "tcp_and_udp",
+    "fast_open": true,
+    "no_delay": true,
+    "reuse_port": true,
+    "nameserver": "1.1.1.1",
+    "ipv6_first": false,
+    "password": "8JCsPssfgS8tiRwiMlhARg==",
+    "timeout": 300,
+    "method": "2022-blake3-aes-128-gcm"
+}
